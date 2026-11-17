@@ -79,7 +79,7 @@ export const WAVE_THEMES = [
   { name: 'First Light', sub: 'Gather embers. Feed the glow.', emberMult: 1, wispMult: 1, sporeMult: 0, fireflyMult: 1, drainMult: 1, emberValueMult: 1 },
   { name: 'Spores Wake', sub: 'Gloomspores spit slow orbs — keep moving.', emberMult: 1, wispMult: 1, sporeMult: 1, fireflyMult: 1, drainMult: 1, emberValueMult: 1 },
   { name: 'Ember Rain', sub: 'Embers fall thick and fast.', emberMult: 1.8, wispMult: 1, sporeMult: 1, fireflyMult: 1, drainMult: 1, emberValueMult: 1 },
-  { name: 'The Swarm', sub: 'The wisps come hunting in numbers.', emberMult: 1, wispMult: 1.7, sporeMult: 1, fireflyMult: 1, drainMult: 1, emberValueMult: 1 },
+  { name: 'The Swarm', sub: 'The wisps come hunting in numbers.', emberMult: 1, wispMult: 1.4, sporeMult: 1, fireflyMult: 1, drainMult: 1, emberValueMult: 1 },
   { name: 'Firefly Bloom', sub: 'Fireflies swarm — every one worth double.', emberMult: 1, wispMult: 1, sporeMult: 1, fireflyMult: 2.2, drainMult: 1, emberValueMult: 1 },
   { name: 'Gloom Tide', sub: 'Spores and wisps together. Do not stand still.', emberMult: 1, wispMult: 1.4, sporeMult: 1.8, fireflyMult: 1, drainMult: 1, emberValueMult: 1 },
   { name: 'The Long Night', sub: 'The dark drinks faster — embers are worth more.', emberMult: 1.2, wispMult: 1.2, sporeMult: 1.2, fireflyMult: 1, drainMult: 1.6, emberValueMult: 1.5 },
@@ -108,6 +108,32 @@ export const MOTH_KING = {
   swoopPause: 1.1,
   restSeconds: 2.2,
   emberTrickleSeconds: 3.5,
+};
+
+// The Gloom Herald, wave 4's mid-boss: a rooted gloom-bloom that lumbers
+// after the keeper, fans slow orbs at her, then opens its glowing heart —
+// and only a dash through that open glow can banish it. Two banishments.
+export const HERALD = {
+  radius: 34,
+  hitsToBanish: 2,
+  stalkSpeed: 48,
+  enterSeconds: 1.4,
+  telegraphSeconds: 0.7,
+  restSeconds: 2.2,
+  fireCooldown: 5.0,
+  fanHalfAngle: 0.35,
+  orbSpeed: 135,
+  score: 300,
+  firstWave: 4,
+};
+
+// Star moths: rare, fast, worth a fortune — a chase across the garden.
+export const STARMOTH = {
+  radius: 11,
+  score: 150,
+  speed: 210,
+  everySeconds: 32,
+  firstWave: 2,
 };
 
 // Combo: pickups chained within the window raise the multiplier.

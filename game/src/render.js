@@ -1,7 +1,7 @@
 // Embergarden's look: a dark garden at night, painted with light. Everything
 // is procedural canvas — gradients, glow and silhouettes, no image files.
 // The night deepens wave by wave and warms toward dawn as the king falls.
-import { FIELD, GLOW, UPGRADES, WAVE_PALETTES } from './config.js';
+import { COMBO, FIELD, GLOW, HERALD, UPGRADES, WAVE_PALETTES } from './config.js';
 import {
   SCREEN_OVER,
   SCREEN_PAUSED,
@@ -231,6 +231,40 @@ export function createRenderer(canvas) {
     context.fill();
   }
 
+  function drawStarMoth(moth, time) {
+    // A star moth: a bright four-pointed star with a golden trail, fast
+    // enough that the keeper has to chase it. It reads at a glance.
+    const twinkle = 0.7 + 0.3 * Math.sin(time * 14 + moth.phase);
+    const dir = moth.vx >= 0 ? 1 : -1;
+    glowCircle(moth.x, moth.y, 46 * twinkle, 'rgba(255, 233, 168, 0.55)', 0.9);
+    for (let i = 1; i <= 3; i += 1) {
+      context.fillStyle = `rgba(255, 215, 106, ${0.5 - i * 0.13})`;
+      context.beginPath();
+      context.arc(moth.x - dir * i * 14, moth.y + Math.sin(time * 3 + moth.phase - i) * 4, 5 - i, 0, Math.PI * 2);
+      context.fill();
+    }
+    context.fillStyle = '#ffe9a8';
+    context.save();
+    context.translate(moth.x, moth.y);
+    context.rotate(Math.sin(time * 3 + moth.phase) * 0.2);
+    context.beginPath();
+    context.moveTo(0, -moth.radius - 4);
+    context.lineTo(4, -4);
+    context.lineTo(moth.radius + 4, 0);
+    context.lineTo(4, 4);
+    context.lineTo(0, moth.radius + 4);
+    context.lineTo(-4, 4);
+    context.lineTo(-moth.radius - 4, 0);
+    context.lineTo(-4, -4);
+    context.closePath();
+    context.fill();
+    context.fillStyle = '#fff3c4';
+    context.beginPath();
+    context.arc(0, 0, 3.2, 0, Math.PI * 2);
+    context.fill();
+    context.restore();
+  }
+
   function drawPetal(petal, time) {
     // A moonpetal: white bloom, slowly opening, bright enough to spot across
     // the field. It fades out as its life runs down.
@@ -411,6 +445,84 @@ export function createRenderer(canvas) {
     }
   }
 
+  function drawHerald(herald, time) {
+    if (!herald || !herald.active) return;
+    const vulnerable = herald.vulnerable;
+    const open = herald.mode === 'rest';
+    const aura = vulnerable ? 'rgba(255, 215, 106, 0.55)' : 'rgba(150, 100, 255, 0.45)';
+    glowCircle(herald.x, herald.y, 110, aura, 0.9);
+    // The telegraph: three dashed lines fanning toward the keeper, so the
+    // orb fan is never a surprise.
+    if (herald.mode === 'telegraph') {
+      const pulse = 0.5 + 0.5 * Math.sin(time * 12);
+      const base = Math.atan2(herald.targetY - herald.y, herald.targetX - herald.x);
+      context.save();
+      context.strokeStyle = `rgba(255, 93, 115, ${0.45 + pulse * 0.35})`;
+      context.lineWidth = 2;
+      context.setLineDash([8, 8]);
+      for (const offset of [-0.35, 0, 0.35]) {
+        const angle = base + offset;
+        context.beginPath();
+        context.moveTo(herald.x, herald.y);
+        context.lineTo(herald.x + Math.cos(angle) * 190, herald.y + Math.sin(angle) * 190);
+        context.stroke();
+      }
+      context.setLineDash([]);
+      context.restore();
+    }
+    const sway = Math.sin(time * 2 + herald.phase) * 0.06;
+    context.save();
+    context.translate(herald.x, herald.y);
+    context.rotate(sway);
+    // Thorn crown.
+    context.strokeStyle = '#8f6bff';
+    context.lineWidth = 2.4;
+    for (let i = 0; i < 7; i += 1) {
+      const angle = -Math.PI / 2 + (i - 3) * 0.32;
+      context.beginPath();
+      context.moveTo(Math.cos(angle) * herald.radius * 0.6, Math.sin(angle) * herald.radius * 0.6);
+      context.lineTo(Math.cos(angle) * (herald.radius + 12), Math.sin(angle) * (herald.radius + 12));
+      context.stroke();
+    }
+    // The bulb: a rooted gloom-bloom, dark outside, amber heart within.
+    context.fillStyle = '#1d1238';
+    context.beginPath();
+    context.arc(0, 0, herald.radius, 0, Math.PI * 2);
+    context.fill();
+    context.strokeStyle = vulnerable ? '#ffd76a' : '#b78cff';
+    context.lineWidth = 2;
+    context.beginPath();
+    context.arc(0, 0, herald.radius, 0, Math.PI * 2);
+    context.stroke();
+    // The heart: shut and violet while it stalks, wide open and gold while
+    // it rests — the only moment a dash can banish it.
+    const heart = open ? 1 : 0.35 + 0.15 * Math.sin(time * 4);
+    context.fillStyle = vulnerable ? '#ffd76a' : '#5a3d99';
+    context.beginPath();
+    context.ellipse(0, 0, 11 * heart + 3, 8 * heart + 2, 0, 0, Math.PI * 2);
+    context.fill();
+    // Eyes above the heart, watching the keeper.
+    context.fillStyle = vulnerable ? '#ffd76a' : '#ff5d73';
+    context.beginPath();
+    context.arc(-9, -14, 3, 0, Math.PI * 2);
+    context.arc(9, -14, 3, 0, Math.PI * 2);
+    context.fill();
+    context.restore();
+    // Banishment pips.
+    for (let i = 0; i < HERALD.hitsToBanish; i += 1) {
+      context.fillStyle = i < herald.hits ? '#ffd76a' : 'rgba(255, 255, 255, 0.25)';
+      context.beginPath();
+      context.arc(herald.x - 9 + i * 18, herald.y - herald.radius - 16, 5, 0, Math.PI * 2);
+      context.fill();
+    }
+    if (vulnerable) {
+      context.fillStyle = '#ffd76a';
+      context.font = `700 15px ${UI_FONT}`;
+      context.textAlign = 'center';
+      context.fillText('DASH THROUGH!', herald.x, herald.y + herald.radius + 26);
+    }
+  }
+
   function drawPlayer(state, time, lightRadiusValue) {
     const player = state.player;
     const low = player.glow < GLOW.lowFlickerBelow;
@@ -538,17 +650,25 @@ export function createRenderer(canvas) {
     context.fillStyle = 'rgba(255, 246, 216, 0.65)';
     context.font = `600 14px ${UI_FONT}`;
     context.fillText(`BEST ${Math.max(best, state.score)}`, 22, 66);
-    // Combo.
+    // Combo, with its timer bar: the chain is only as good as its clock.
     if (state.multiplier > 1) {
       context.fillStyle = '#7ef0e0';
       context.font = `800 20px ${UI_FONT}`;
       context.fillText(`COMBO x${state.multiplier.toFixed(2).replace(/\.?0+$/, '')}`, 22, 94);
+      const barW = 120;
+      const barFraction = Math.max(0, state.comboTimer / COMBO.windowSeconds);
+      context.fillStyle = 'rgba(0, 0, 0, 0.45)';
+      context.fillRect(22, 100, barW, 5);
+      context.fillStyle = '#7ef0e0';
+      context.fillRect(22, 100, barW * barFraction, 5);
     }
-    // Wave, theme and quota, top centre.
+    // Wave, theme and quota, top centre — or the boss at hand.
     context.textAlign = 'center';
     context.fillStyle = '#fff6d8';
     context.font = `700 20px ${UI_FONT}`;
-    if (state.wave === 8) {
+    if (state.boss && state.boss.kind === 'herald') {
+      context.fillText(`WAVE 4 — THE GLOOM HERALD  ✦ ${state.boss.hits}/${HERALD.hitsToBanish}`, FIELD.width / 2, 34);
+    } else if (state.wave === 8) {
       const hits = state.boss ? state.boss.hits : 0;
       context.fillText(`WAVE 8 — THE MOTH KING  ✦ ${hits}/3`, FIELD.width / 2, 34);
     } else {
@@ -637,8 +757,8 @@ export function createRenderer(canvas) {
     context.font = `600 17px ${UI_FONT}`;
     const lines = [
       'Gather golden embers to feed your lantern — its glow is your life.',
-      'Chain fireflies for combos. Moonpetals grant a shield.',
-      'Dodge the shadow wisps — and the gloomspores’ slow orbs.',
+      'Chain fireflies for combos. Chase star moths — worth a fortune.',
+      'Dodge wisps and gloomspore orbs. Beware the Gloom Herald on wave 4.',
       'Dash through the Moth King when it rests, three times, and dawn breaks.',
     ];
     lines.forEach((line, i) => {
@@ -728,6 +848,14 @@ export function createRenderer(canvas) {
     context.globalAlpha = 1;
   }
 
+  /** The keeper's grade for the whole night: score first, hits as the tie-break. */
+  function dawnRank(state) {
+    if (state.score >= 14000 && state.hitsTaken <= 8) return { letter: 'S', label: 'Flawless keeper' };
+    if (state.score >= 11000) return { letter: 'A', label: 'The garden sings' };
+    if (state.score >= 8000) return { letter: 'B', label: 'A steady light' };
+    return { letter: 'C', label: 'Dawn breaks — barely' };
+  }
+
   function drawWin(state, best) {
     const dawn = 1;
     context.textAlign = 'center';
@@ -745,11 +873,27 @@ export function createRenderer(canvas) {
     const minutes = Math.floor(state.playTime / 60);
     const seconds = Math.floor(state.playTime % 60).toString().padStart(2, '0');
     context.fillText(`Cleared in ${minutes}:${seconds}  ·  ${state.dashCount} dashes  ·  ${state.hitsTaken} hits taken  ·  ${state.petalsEaten} petal${state.petalsEaten === 1 ? "" : "s"}  ·  Best ${Math.max(best, state.score)}`, FIELD.width / 2, 322);
+    // Dawn rank, with the night's trophies beside it.
+    const rank = dawnRank(state);
+    let rankLine = `Dawn Rank  ${rank.letter} — ${rank.label}`;
+    if (state.heraldBanished) rankLine += '  ·  Herald banished';
+    if (state.mothsCaught > 0) rankLine += `  ·  ${state.mothsCaught} star moth${state.mothsCaught === 1 ? '' : 's'}`;
+    context.fillStyle = '#ffd76a';
+    context.font = `800 24px ${UI_FONT}`;
+    context.fillText(rankLine, FIELD.width / 2, 354);
+    // A win is a new best whenever it beats the best the night started
+    // with — including the very first win, when there is no best yet.
+    const newBest = state.score > state.best;
+    if (newBest) {
+      context.fillStyle = '#7ef0e0';
+      context.font = `800 18px ${UI_FONT}`;
+      context.fillText('★  NEW BEST!  ★', FIELD.width / 2, 382);
+    }
     const blink = 0.6 + 0.4 * Math.sin(state.time * 3.2);
     context.globalAlpha = blink;
     context.fillStyle = '#ffd76a';
     context.font = `800 22px ${UI_FONT}`;
-    context.fillText('Press R or click to play again', FIELD.width / 2, 392);
+    context.fillText('Press R or click to play again', FIELD.width / 2, newBest ? 414 : 392);
     context.globalAlpha = 1;
     void dawn;
   }
@@ -790,11 +934,15 @@ export function createRenderer(canvas) {
       drawMotes(state, time);
       for (const ember of state.embers) drawEmber(ember, time);
       for (const fly of state.fireflies) drawFireflyEntity(fly, time);
+      for (const moth of state.moths) drawStarMoth(moth, time);
       for (const petal of state.petals) drawPetal(petal, time);
       for (const wisp of state.wisps) drawWisp(wisp, time);
       for (const spore of state.spores) drawSpore(spore, time);
       for (const orb of state.orbs) drawOrb(orb);
-      drawBoss(state.boss, time);
+      if (state.boss) {
+        if (state.boss.kind === 'herald') drawHerald(state.boss, time);
+        else drawBoss(state.boss, time);
+      }
       drawPlants(time);
       if (state.screen !== SCREEN_TITLE) drawPlayer(state, time, lightRadiusValue);
       drawParticles(state);

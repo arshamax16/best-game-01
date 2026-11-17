@@ -9,10 +9,12 @@ import {
   FIELD,
   FIREFLY,
   GLOW,
+  HERALD,
   MOONPETAL,
   MOTH_KING,
   PLAYER,
   SPORE,
+  STARMOTH,
   STEP,
   UPGRADES,
   WAVES,
@@ -20,6 +22,7 @@ import {
   WISP,
 } from './config.js';
 import { pick, range, shuffle } from './random.js';
+import { createHerald, stepHerald } from './herald.js';
 
 export const EVENT_PICKUP = 1;
 export const EVENT_FIREFLY = 2;
@@ -45,6 +48,7 @@ const KIND_WISP = 'wisp';
 const KIND_SPORE = 'spore';
 const KIND_ORB = 'orb';
 const KIND_PETAL = 'petal';
+const KIND_MOTH = 'moth';
 
 function makePlayer() {
   return {
@@ -78,11 +82,14 @@ export function createWorld(random) {
     quotaGot: 0,
     embers: [],
     fireflies: [],
+    moths: [],
     wisps: [],
     spores: [],
     orbs: [],
     petals: [],
     boss: null,
+    heraldBanished: false,
+    mothsCaught: 0,
     particles: [],
     floats: [],
     motes: [],
@@ -107,6 +114,7 @@ export function createWorld(random) {
     offered: [],
     spawnTimer: 0,
     fireflyTimer: 0,
+    mothTimer: STARMOTH.everySeconds,
     emberTrickleTimer: 0,
     wispTimer: 0,
     sporeTimer: 0,
@@ -263,6 +271,7 @@ export function createWorld(random) {
 
   function spawnBoss() {
     state.boss = {
+      kind: 'king',
       x: FIELD.width / 2,
       y: -70,
       vx: 0,
@@ -278,6 +287,21 @@ export function createWorld(random) {
     };
   }
 
+  function spawnMoth() {
+    // A star moth crosses the garden, left to right or right to left,
+    // fast and high: catch it before it leaves.
+    const fromLeft = random() < 0.5;
+    state.moths.push({
+      kind: KIND_MOTH,
+      x: fromLeft ? -20 : FIELD.width + 20,
+      y: range(random, 90, FIELD.height - 160),
+      vx: (fromLeft ? 1 : -1) * STARMOTH.speed,
+      phase: random() * Math.PI * 2,
+      radius: STARMOTH.radius,
+      active: true,
+    });
+  }
+
   function startWave(wave) {
     state.wave = wave;
     state.theme = WAVE_THEMES[wave - 1];
@@ -286,6 +310,7 @@ export function createWorld(random) {
     state.wisps.length = 0;
     state.embers.length = 0;
     state.fireflies.length = 0;
+    state.moths.length = 0;
     state.spores.length = 0;
     state.orbs.length = 0;
     state.petals.length = 0;
@@ -298,6 +323,7 @@ export function createWorld(random) {
     for (let i = 0; i < 5 + wave; i += 1) spawnEmber(true);
     for (let i = 0; i < 2; i += 1) spawnFirefly();
     if (wave === WAVES.total) spawnBoss();
+    if (wave === HERALD.firstWave) state.boss = createHerald(random);
     showBanner(`WAVE ${wave} — ${state.theme.name}`, state.theme.sub);
   }
 
@@ -657,11 +683,21 @@ export function createWorld(random) {
       spawnPetal();
       state.petalTimer = MOONPETAL.everySeconds + random() * 6;
     }
-    if (state.boss) {
+    if (state.boss && state.boss.kind === 'king') {
       state.emberTrickleTimer -= dt;
       if (state.emberTrickleTimer <= 0) {
         spawnEmber(true);
         state.emberTrickleTimer = MOTH_KING.emberTrickleSeconds;
+      }
+    }
+
+    // Star moths cross the garden from wave 2: one at a time, fast, gone
+    // in seconds — a chase worth a fortune.
+    if (state.wave >= STARMOTH.firstWave) {
+      state.mothTimer -= dt;
+      if (state.mothTimer <= 0 && state.moths.length === 0) {
+        spawnMoth();
+        state.mothTimer = STARMOTH.everySeconds + random() * 8;
       }
     }
 
@@ -744,6 +780,32 @@ export function createWorld(random) {
     }
     state.petals = state.petals.filter((p) => p.active);
 
+    // Star moths streak across the garden: catch one mid-flight and the
+    // chain jumps. They leave as fast as they came.
+    for (const moth of state.moths) {
+      if (!moth.active) continue;
+      moth.phase += dt * 3;
+      moth.x += moth.vx * dt;
+      moth.y += Math.sin(moth.phase) * 46 * dt;
+      if (moth.x < -40 || moth.x > FIELD.width + 40) {
+        moth.active = false;
+        continue;
+      }
+      const dx = player.x - moth.x;
+      const dy = player.y - moth.y;
+      if (Math.hypot(dx, dy) < player.radius + moth.radius + pickupRadius) {
+        moth.active = false;
+        addCombo();
+        const value = Math.round(STARMOTH.score * state.multiplier);
+        state.score += value;
+        state.mothsCaught += 1;
+        burst(moth.x, moth.y, '#ffe9a8', 16, 240);
+        floatText(moth.x, moth.y - 12, `+${value} STAR MOTH`, '#ffe9a8');
+        events |= EVENT_FIREFLY;
+      }
+    }
+    state.moths = state.moths.filter((m) => m.active);
+
     // Wisps steer toward the light. Touching one (unless dashing or shielded
     // by invulnerability) burns glow and breaks the combo.
     const wispSpeed = WISP.baseSpeed + WISP.speedPerWave * state.wave;
@@ -784,10 +846,12 @@ export function createWorld(random) {
     events |= stepOrbs(dt);
     if (events & EVENT_OVER) return events;
 
-    // The Moth King, on wave 8.
+    // The bosses: the Gloom Herald on wave 4, the Moth King on wave 8.
     if (state.boss) {
-      events |= stepBoss(dt);
+      const bossApi = { state, random, takeHit, burst, floatText, spawnEmberAt, spawnPetal, showBanner };
+      events |= state.boss.kind === 'herald' ? stepHerald(state.boss, bossApi, dt) : stepBoss(dt);
       if (events & (EVENT_OVER | EVENT_WIN)) return events;
+      if (!state.boss.active) state.boss = null;
     }
 
     // Wave cleared: the quota is met. Wave 8 ends only with the king banished.
@@ -871,6 +935,10 @@ export function createWorld(random) {
       state.offered = [];
       state.embers = [];
       state.fireflies = [];
+      state.moths = [];
+      state.mothTimer = STARMOTH.everySeconds;
+      state.heraldBanished = false;
+      state.mothsCaught = 0;
       state.wisps = [];
       state.spores = [];
       state.orbs = [];

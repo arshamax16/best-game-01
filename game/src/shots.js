@@ -31,6 +31,12 @@ function timeToThreat(state, dx, dy, horizon) {
       const oy = orb.y + orb.vy * t;
       if (Math.hypot(ox - x, oy - y) < player.radius + orb.radius + 4) return t;
     }
+    // A boss body is a threat too, unless it is open and the keeper means
+    // to dash through it: the vulnerable branch below returns before this.
+    const boss = state.boss;
+    if (boss && boss.active && !boss.vulnerable) {
+      if (Math.hypot(boss.x - x, boss.y - y) < player.radius + boss.radius + 6) return t;
+    }
   }
   return Infinity;
 }
@@ -41,21 +47,35 @@ function autopilot(state, horizon, careless) {
   const player = state.player;
   const boss = state.boss;
   // The king, resting and glowing: dash through it now — but approach on
-  // the safest line, not through a wisp.
+  // the safest line, not through a wisp. A line only counts if the dash
+  // still goes through the boss: an offset line that misses it ends with
+  // the keeper standing next to an open boss, taking the hit instead.
   if (!careless && boss && boss.active && boss.vulnerable) {
     const distance = Math.hypot(boss.x - player.x, boss.y - player.y);
     const dx = boss.x - player.x;
     const dy = boss.y - player.y;
+    const through = ([cx, cy]) => {
+      // The dash's line must pass within the boss's circle, going toward it:
+      // the perpendicular distance from the boss to the line, and a
+      // positive run along it.
+      const len = Math.hypot(cx, cy) || 1;
+      const ux = cx / len;
+      const uy = cy / len;
+      const cross = Math.abs(dx * uy - dy * ux);
+      const along = dx * ux + dy * uy;
+      return cross < boss.radius && along > 0;
+    };
     const candidates = [
       [dx, dy],
       [dx + 110, dy],
       [dx - 110, dy],
       [dx, dy + 110],
       [dx, dy - 110],
-    ];
-    let best = candidates[0];
+    ].filter(through);
+    const lines = candidates.length ? candidates : [[dx, dy]];
+    let best = lines[0];
     let bestTime = timeToThreat(state, best[0], best[1], 0.7);
-    for (const candidate of candidates.slice(1)) {
+    for (const candidate of lines.slice(1)) {
       const time = timeToThreat(state, candidate[0], candidate[1], 0.7);
       if (time > bestTime) {
         bestTime = time;
@@ -133,7 +153,7 @@ function autopilot(state, horizon, careless) {
   let dx = targetX - player.x;
   let dy = targetY - player.y;
   if (!careless) {
-    // A wisp or orb within 130 px: swerve perpendicular to it.
+    // A wisp, orb or stalking boss within 130 px: swerve perpendicular to it.
     let threat = null;
     let threatDistance = 130;
     for (const wisp of state.wisps) {
@@ -148,6 +168,14 @@ function autopilot(state, horizon, careless) {
       if (distance < threatDistance) {
         threatDistance = distance;
         threat = orb;
+      }
+    }
+    const boss = state.boss;
+    if (boss && boss.active && !boss.vulnerable) {
+      const distance = Math.hypot(boss.x - player.x, boss.y - player.y);
+      if (distance < threatDistance + boss.radius) {
+        threatDistance = distance;
+        threat = boss;
       }
     }
     if (threat) {
@@ -228,7 +256,7 @@ function playToWave(world, wave, limitSeconds) {
  */
 export function stageShot(name, world) {
   world.reset();
-  if (name !== 'play' && name !== 'upgrade' && name !== 'end' && name !== 'boss' && name !== 'win') {
+  if (name !== 'play' && name !== 'upgrade' && name !== 'end' && name !== 'boss' && name !== 'win' && name !== 'herald') {
     for (let i = 0; i < TITLE_SECONDS / STEP; i += 1) world.step(STEP, idleInput());
     return { screen: SCREEN_TITLE, best: 0 };
   }
@@ -251,6 +279,23 @@ export function stageShot(name, world) {
       const boss = world.state.boss;
       // Wait for a rest in the open, where the king reads at a glance.
       if (boss && boss.vulnerable && boss.x > 120 && boss.x < 840 && boss.y > 80 && boss.y < 450) break;
+      if (events & EVENT_OVER) break;
+      if (world.state.screen === SCREEN_WIN) break;
+      if (world.state.screen === SCREEN_UPGRADE) {
+        world.applyUpgrade(world.state.offered[0].id);
+        world.nextWave();
+      }
+    }
+    return { screen: world.state.screen === SCREEN_OVER ? SCREEN_OVER : SCREEN_PLAY, best: world.state.score };
+  }
+  if (name === 'herald') {
+    // Reach wave 4's Gloom Herald, then play until it opens its glowing
+    // heart in the open: the mid-boss at its most readable.
+    if (!playToWave(world, 4, 600)) return { screen: SCREEN_PLAY, best: world.state.score };
+    for (let i = 0; i < 90 / STEP; i += 1) {
+      const events = world.step(STEP, autopilot(world.state, 0.7, false));
+      const boss = world.state.boss;
+      if (boss && boss.kind === 'herald' && boss.vulnerable && boss.x > 120 && boss.x < 840 && boss.y > 80 && boss.y < 450) break;
       if (events & EVENT_OVER) break;
       if (world.state.screen === SCREEN_WIN) break;
       if (world.state.screen === SCREEN_UPGRADE) {

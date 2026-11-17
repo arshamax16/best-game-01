@@ -1,6 +1,7 @@
 // Embergarden's look: a dark garden at night, painted with light. Everything
 // is procedural canvas — gradients, glow and silhouettes, no image files.
-import { FIELD, GLOW, UPGRADES } from './config.js';
+// The night deepens wave by wave and warms toward dawn as the king falls.
+import { FIELD, GLOW, UPGRADES, WAVE_PALETTES } from './config.js';
 import {
   SCREEN_OVER,
   SCREEN_PAUSED,
@@ -77,16 +78,24 @@ export function createRenderer(canvas) {
     offsetY = (canvas.height - FIELD.height * scale) / 2;
   }
 
-  function drawBackground(time, dawn) {
+  function paletteFor(state) {
+    const wave = Math.max(1, Math.min(8, state.wave));
+    const dawn = state.screen === SCREEN_WIN ? 1 : 0;
+    if (dawn > 0) return ['#3a2b63', '#7a4a72', '#e8a56b', '#4a3560', '#3d2f52', '#241a33'];
+    return WAVE_PALETTES[wave - 1];
+  }
+
+  function drawBackground(time, dawn, state) {
+    const palette = paletteFor(state);
     const sky = context.createLinearGradient(0, 0, 0, FIELD.height);
     if (dawn > 0) {
       sky.addColorStop(0, '#3a2b63');
       sky.addColorStop(0.55, '#7a4a72');
       sky.addColorStop(1, '#e8a56b');
     } else {
-      sky.addColorStop(0, '#0a0e26');
-      sky.addColorStop(0.55, '#181344');
-      sky.addColorStop(1, '#2a1f58');
+      sky.addColorStop(0, palette[0]);
+      sky.addColorStop(0.55, palette[1]);
+      sky.addColorStop(1, palette[2]);
     }
     context.fillStyle = sky;
     context.fillRect(0, 0, FIELD.width, FIELD.height);
@@ -121,7 +130,7 @@ export function createRenderer(canvas) {
     context.fill();
 
     // Distant hills.
-    context.fillStyle = dawn > 0 ? '#4a3560' : '#120d33';
+    context.fillStyle = dawn > 0 ? '#4a3560' : palette[3];
     context.beginPath();
     context.moveTo(0, FIELD.height - 120);
     context.bezierCurveTo(220, FIELD.height - 190, 420, FIELD.height - 110, 640, FIELD.height - 160);
@@ -133,8 +142,8 @@ export function createRenderer(canvas) {
 
     // The garden floor.
     const ground = context.createLinearGradient(0, FIELD.height - 90, 0, FIELD.height);
-    ground.addColorStop(0, dawn > 0 ? '#3d2f52' : '#0a0718');
-    ground.addColorStop(1, dawn > 0 ? '#241a33' : '#05030c');
+    ground.addColorStop(0, dawn > 0 ? '#3d2f52' : palette[4]);
+    ground.addColorStop(1, dawn > 0 ? '#241a33' : palette[5]);
     context.fillStyle = ground;
     context.fillRect(0, FIELD.height - 90, FIELD.width, 90);
   }
@@ -222,6 +231,30 @@ export function createRenderer(canvas) {
     context.fill();
   }
 
+  function drawPetal(petal, time) {
+    // A moonpetal: white bloom, slowly opening, bright enough to spot across
+    // the field. It fades out as its life runs down.
+    const fade = Math.min(1, petal.life / 2);
+    const open = 0.7 + 0.3 * Math.sin(time * 2 + petal.phase);
+    context.globalAlpha = fade;
+    glowCircle(petal.x, petal.y, 44, 'rgba(255, 255, 255, 0.5)', 0.9);
+    context.fillStyle = '#fdf6ff';
+    context.save();
+    context.translate(petal.x, petal.y);
+    for (let i = 0; i < 5; i += 1) {
+      context.rotate((Math.PI * 2) / 5);
+      context.beginPath();
+      context.ellipse(0, -9 * open, 5.5, 9 * open, 0, 0, Math.PI * 2);
+      context.fill();
+    }
+    context.fillStyle = '#ffd76a';
+    context.beginPath();
+    context.arc(0, 0, 4, 0, Math.PI * 2);
+    context.fill();
+    context.restore();
+    context.globalAlpha = 1;
+  }
+
   function drawWisp(wisp, time) {
     const breathe = 1 + 0.12 * Math.sin(time * 4 + wisp.phase);
     glowCircle(wisp.x, wisp.y, 46 * breathe, 'rgba(150, 100, 255, 0.4)', 0.9);
@@ -244,11 +277,79 @@ export function createRenderer(canvas) {
     context.fill();
   }
 
+  function drawSpore(spore, time) {
+    // A gloomspore: a rooted, spiky shadow that glows as it aims.
+    const aiming = spore.mode === 'aim';
+    const aimPulse = aiming ? 0.5 + 0.5 * Math.sin(time * 10) : 0.15;
+    glowCircle(spore.x, spore.y, 40, `rgba(150, 100, 255, ${0.3 + aimPulse * 0.3})`, 0.9);
+    context.fillStyle = '#1d1238';
+    context.beginPath();
+    context.arc(spore.x, spore.y, spore.radius, 0, Math.PI * 2);
+    context.fill();
+    // Spikes.
+    context.strokeStyle = '#8f6bff';
+    context.lineWidth = 2;
+    for (let i = 0; i < 8; i += 1) {
+      const angle = (i / 8) * Math.PI * 2 + spore.phase * 0.2;
+      context.beginPath();
+      context.moveTo(spore.x + Math.cos(angle) * spore.radius * 0.7, spore.y + Math.sin(angle) * spore.radius * 0.7);
+      context.lineTo(spore.x + Math.cos(angle) * (spore.radius + 7), spore.y + Math.sin(angle) * (spore.radius + 7));
+      context.stroke();
+    }
+    // The mouth: a slit that brightens while it aims.
+    context.fillStyle = aiming ? '#ff5d73' : '#5a3d99';
+    context.beginPath();
+    context.ellipse(spore.x, spore.y, 5.5, 2.5 + aimPulse * 2, 0, 0, Math.PI * 2);
+    context.fill();
+    if (aiming) {
+      context.fillStyle = '#ffd76a';
+      context.font = `700 11px ${UI_FONT}`;
+      context.textAlign = 'center';
+      context.fillText('!', spore.x, spore.y - spore.radius - 8);
+    }
+  }
+
+  function drawOrb(orb) {
+    glowCircle(orb.x, orb.y, 22, 'rgba(150, 100, 255, 0.45)', 0.9);
+    context.fillStyle = '#241a4d';
+    context.beginPath();
+    context.arc(orb.x, orb.y, orb.radius, 0, Math.PI * 2);
+    context.fill();
+    context.strokeStyle = '#b78cff';
+    context.lineWidth = 1.5;
+    context.beginPath();
+    context.arc(orb.x, orb.y, orb.radius * 0.7, 0, Math.PI * 2);
+    context.stroke();
+    context.fillStyle = '#ff5d73';
+    context.beginPath();
+    context.arc(orb.x, orb.y, 2.4, 0, Math.PI * 2);
+    context.fill();
+  }
+
   function drawBoss(boss, time) {
     if (!boss || !boss.active) return;
     const vulnerable = boss.vulnerable;
     const aura = vulnerable ? 'rgba(255, 215, 106, 0.55)' : 'rgba(150, 100, 255, 0.45)';
     glowCircle(boss.x, boss.y, 130, aura, 0.9);
+    // The telegraph: a dashed line to where the king will strike, and a
+    // pulsing ring on the spot itself, so the swoop is never a surprise.
+    if (boss.mode === 'telegraph') {
+      const pulse = 0.5 + 0.5 * Math.sin(time * 12);
+      context.save();
+      context.strokeStyle = `rgba(255, 93, 115, ${0.45 + pulse * 0.35})`;
+      context.lineWidth = 2;
+      context.setLineDash([8, 8]);
+      context.beginPath();
+      context.moveTo(boss.x, boss.y);
+      context.lineTo(boss.targetX, boss.targetY);
+      context.stroke();
+      context.setLineDash([]);
+      context.strokeStyle = `rgba(255, 93, 115, ${0.5 + pulse * 0.4})`;
+      context.beginPath();
+      context.arc(boss.targetX, boss.targetY, 22 + pulse * 6, 0, Math.PI * 2);
+      context.stroke();
+      context.restore();
+    }
     const flap = Math.sin(time * (boss.mode === 'swoop' ? 22 : 6)) * 0.5;
     context.save();
     context.translate(boss.x, boss.y);
@@ -382,6 +483,17 @@ export function createRenderer(canvas) {
     context.arc(player.x, player.y, player.radius + 8, -Math.PI / 2, -Math.PI / 2 + fraction * Math.PI * 2);
     context.stroke();
 
+    // The moonpetal's ward: a white ring while one hit is held for you.
+    if (player.shield) {
+      context.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+      context.lineWidth = 2;
+      context.setLineDash([6, 5]);
+      context.beginPath();
+      context.arc(player.x, player.y, player.radius + 18, 0, Math.PI * 2);
+      context.stroke();
+      context.setLineDash([]);
+    }
+
     // Dash cooldown arc, thin and blue.
     if (player.dashCooldown > 0) {
       const total = 2.5;
@@ -432,7 +544,7 @@ export function createRenderer(canvas) {
       context.font = `800 20px ${UI_FONT}`;
       context.fillText(`COMBO x${state.multiplier.toFixed(2).replace(/\.?0+$/, '')}`, 22, 94);
     }
-    // Wave and quota, top centre.
+    // Wave, theme and quota, top centre.
     context.textAlign = 'center';
     context.fillStyle = '#fff6d8';
     context.font = `700 20px ${UI_FONT}`;
@@ -440,7 +552,7 @@ export function createRenderer(canvas) {
       const hits = state.boss ? state.boss.hits : 0;
       context.fillText(`WAVE 8 — THE MOTH KING  ✦ ${hits}/3`, FIELD.width / 2, 34);
     } else {
-      context.fillText(`WAVE ${state.wave} / 8`, FIELD.width / 2, 34);
+      context.fillText(`WAVE ${state.wave} / 8 — ${state.theme.name.toUpperCase()}`, FIELD.width / 2, 34);
       context.fillStyle = 'rgba(255, 246, 216, 0.7)';
       context.font = `600 14px ${UI_FONT}`;
       context.fillText(`Embers ${Math.min(state.quotaGot, state.quota)} / ${state.quota}`, FIELD.width / 2, 56);
@@ -488,6 +600,23 @@ export function createRenderer(canvas) {
     context.fillText(player.dashCooldown > 0 ? 'Dash recharging…' : 'SPACE / CLICK — DASH', 22, FIELD.height - 18);
   }
 
+  function drawBanner(state) {
+    const banner = state.banner;
+    if (!banner) return;
+    const age = banner.max - banner.timer;
+    const alpha = banner.timer < 0.6 ? banner.timer / 0.6 : Math.min(1, age / 0.25);
+    context.save();
+    context.globalAlpha = Math.max(0, Math.min(1, alpha));
+    context.textAlign = 'center';
+    context.fillStyle = '#ffe9a8';
+    context.font = `700 44px ${TITLE_FONT}`;
+    context.fillText(banner.title, FIELD.width / 2, 150);
+    context.fillStyle = 'rgba(255, 246, 216, 0.9)';
+    context.font = `600 17px ${UI_FONT}`;
+    context.fillText(banner.sub, FIELD.width / 2, 182);
+    context.restore();
+  }
+
   function dimScreen(alpha) {
     context.fillStyle = `rgba(4, 6, 18, ${alpha})`;
     context.fillRect(0, 0, FIELD.width, FIELD.height);
@@ -508,25 +637,26 @@ export function createRenderer(canvas) {
     context.font = `600 17px ${UI_FONT}`;
     const lines = [
       'Gather golden embers to feed your lantern — its glow is your life.',
-      'Chain fireflies for combos. Dodge the shadow wisps.',
+      'Chain fireflies for combos. Moonpetals grant a shield.',
+      'Dodge the shadow wisps — and the gloomspores’ slow orbs.',
       'Dash through the Moth King when it rests, three times, and dawn breaks.',
     ];
     lines.forEach((line, i) => {
-      context.fillText(line, FIELD.width / 2, 268 + i * 28 + bob * 0.4);
+      context.fillText(line, FIELD.width / 2, 262 + i * 28 + bob * 0.4);
     });
     context.fillStyle = '#7ef0e0';
     context.font = `700 17px ${UI_FONT}`;
-    context.fillText('MOUSE or WASD to move  ·  SPACE or CLICK to dash  ·  P to pause  ·  M to mute', FIELD.width / 2, 372);
+    context.fillText('MOUSE or WASD to move  ·  SPACE or CLICK to dash  ·  P to pause  ·  M to mute', FIELD.width / 2, 388);
     const blink = 0.6 + 0.4 * Math.sin(time * 3.2);
     context.globalAlpha = blink;
     context.fillStyle = '#fff6d8';
     context.font = `800 24px ${UI_FONT}`;
-    context.fillText('Click or press Enter to begin', FIELD.width / 2, 436);
+    context.fillText('Click or press Enter to begin', FIELD.width / 2, 448);
     context.globalAlpha = 1;
     if (best > 0) {
       context.fillStyle = 'rgba(255, 246, 216, 0.75)';
       context.font = `600 16px ${UI_FONT}`;
-      context.fillText(`Best score: ${best}`, FIELD.width / 2, 478);
+      context.fillText(`Best score: ${best}`, FIELD.width / 2, 490);
     }
   }
 
@@ -589,7 +719,7 @@ export function createRenderer(canvas) {
     context.fillText(`Score  ${state.score}`, FIELD.width / 2, 288);
     context.fillStyle = 'rgba(255, 246, 216, 0.75)';
     context.font = `600 18px ${UI_FONT}`;
-    context.fillText(`Wave ${state.wave}  ·  ${state.embersEaten} embers  ·  ${state.firefliesEaten} fireflies  ·  Best ${Math.max(best, state.score)}`, FIELD.width / 2, 326);
+    context.fillText(`Wave ${state.wave} — ${state.theme.name}  ·  ${state.embersEaten} embers  ·  ${state.firefliesEaten} fireflies  ·  ${state.petalsEaten} petal${state.petalsEaten === 1 ? "" : "s"}  ·  Best ${Math.max(best, state.score)}`, FIELD.width / 2, 326);
     const blink = 0.6 + 0.4 * Math.sin(state.time * 3.2);
     context.globalAlpha = blink;
     context.fillStyle = '#ffd76a';
@@ -614,7 +744,7 @@ export function createRenderer(canvas) {
     context.font = `600 18px ${UI_FONT}`;
     const minutes = Math.floor(state.playTime / 60);
     const seconds = Math.floor(state.playTime % 60).toString().padStart(2, '0');
-    context.fillText(`Cleared in ${minutes}:${seconds}  ·  ${state.dashCount} dashes  ·  ${state.hitsTaken} hits taken  ·  Best ${Math.max(best, state.score)}`, FIELD.width / 2, 322);
+    context.fillText(`Cleared in ${minutes}:${seconds}  ·  ${state.dashCount} dashes  ·  ${state.hitsTaken} hits taken  ·  ${state.petalsEaten} petal${state.petalsEaten === 1 ? "" : "s"}  ·  Best ${Math.max(best, state.score)}`, FIELD.width / 2, 322);
     const blink = 0.6 + 0.4 * Math.sin(state.time * 3.2);
     context.globalAlpha = blink;
     context.fillStyle = '#ffd76a';
@@ -656,16 +786,20 @@ export function createRenderer(canvas) {
       const shakeX = state.shake > 0 ? (Math.random() - 0.5) * state.shake * 22 : 0;
       const shakeY = state.shake > 0 ? (Math.random() - 0.5) * state.shake * 22 : 0;
       context.translate(shakeX, shakeY);
-      drawBackground(time, dawn);
+      drawBackground(time, dawn, state);
       drawMotes(state, time);
       for (const ember of state.embers) drawEmber(ember, time);
       for (const fly of state.fireflies) drawFireflyEntity(fly, time);
+      for (const petal of state.petals) drawPetal(petal, time);
       for (const wisp of state.wisps) drawWisp(wisp, time);
+      for (const spore of state.spores) drawSpore(spore, time);
+      for (const orb of state.orbs) drawOrb(orb);
       drawBoss(state.boss, time);
       drawPlants(time);
       if (state.screen !== SCREEN_TITLE) drawPlayer(state, time, lightRadiusValue);
       drawParticles(state);
       if (state.screen === SCREEN_PLAY || state.screen === SCREEN_PAUSED) drawHud(state, best, muted);
+      if (state.screen === SCREEN_PLAY) drawBanner(state);
       if (state.screen === SCREEN_TITLE) drawTitle(state, best, time);
       if (state.screen === SCREEN_UPGRADE) drawUpgrade(state);
       if (state.screen === SCREEN_PAUSED) drawPaused();

@@ -1,5 +1,6 @@
 // Embergarden's rules: Luma's glow, the embers that feed it, the wisps that
-// hunger for it, the waves, the upgrades between them, and the Moth King.
+// hunger for it, the gloomspores that spit orbs, the moonpetals that ward,
+// the waves and their weather, the upgrades between them, and the Moth King.
 // The world is pure logic — no DOM, no canvas — so a seed replays exactly.
 import {
   BEST_KEY,
@@ -8,11 +9,14 @@ import {
   FIELD,
   FIREFLY,
   GLOW,
+  MOONPETAL,
   MOTH_KING,
   PLAYER,
+  SPORE,
   STEP,
   UPGRADES,
   WAVES,
+  WAVE_THEMES,
   WISP,
 } from './config.js';
 import { pick, range, shuffle } from './random.js';
@@ -25,6 +29,8 @@ export const EVENT_WAVE_CLEAR = 16;
 export const EVENT_OVER = 32;
 export const EVENT_WIN = 64;
 export const EVENT_BOSS_HIT = 128;
+export const EVENT_SHIELD = 256;
+export const EVENT_PETAL = 512;
 
 export const SCREEN_TITLE = 'title';
 export const SCREEN_PLAY = 'play';
@@ -36,6 +42,9 @@ export const SCREEN_WIN = 'win';
 const KIND_EMBER = 'ember';
 const KIND_FIREFLY = 'firefly';
 const KIND_WISP = 'wisp';
+const KIND_SPORE = 'spore';
+const KIND_ORB = 'orb';
+const KIND_PETAL = 'petal';
 
 function makePlayer() {
   return {
@@ -49,6 +58,7 @@ function makePlayer() {
     dashTime: 0,
     dashCooldown: 0,
     invuln: 0,
+    shield: false,
     face: 0,
   };
 }
@@ -63,11 +73,15 @@ export function createWorld(random) {
     comboTimer: 0,
     multiplier: 1,
     wave: 1,
+    theme: WAVE_THEMES[0],
     quota: WAVES.quotaBase + WAVES.quotaPerWave,
     quotaGot: 0,
     embers: [],
     fireflies: [],
     wisps: [],
+    spores: [],
+    orbs: [],
+    petals: [],
     boss: null,
     particles: [],
     floats: [],
@@ -80,16 +94,24 @@ export function createWorld(random) {
     hitsTaken: 0,
     embersEaten: 0,
     firefliesEaten: 0,
+    petalsEaten: 0,
+    sporesScattered: 0,
+    orbsScattered: 0,
     lightRadiusMult: 1,
     dashCooldownMult: 1,
     pickupBonus: 0,
     emberValueMult: 1,
     speedMult: 1,
+    drainMult: 1,
+    emberTrail: false,
     offered: [],
     spawnTimer: 0,
     fireflyTimer: 0,
     emberTrickleTimer: 0,
     wispTimer: 0,
+    sporeTimer: 0,
+    petalTimer: MOONPETAL.everySeconds,
+    banner: null,
   };
 
   // Ninety decorative motes drift through the garden forever, on every screen.
@@ -130,6 +152,10 @@ export function createWorld(random) {
     state.floats.push({ x, y, text, life: 1.1, maxLife: 1.1, color });
   }
 
+  function showBanner(title, sub) {
+    state.banner = { title, sub, timer: 2.6, max: 2.6 };
+  }
+
   function spawnEmber(anywhere = false) {
     const margin = 30;
     state.embers.push({
@@ -137,6 +163,18 @@ export function createWorld(random) {
       x: range(random, margin, FIELD.width - margin),
       y: anywhere ? range(random, margin, FIELD.height - margin) : FIELD.height + 12,
       vy: -range(random, EMBER.drift * 0.7, EMBER.drift * 1.3),
+      phase: random() * Math.PI * 2,
+      radius: EMBER.radius,
+      active: true,
+    });
+  }
+
+  function spawnEmberAt(x, y) {
+    state.embers.push({
+      kind: KIND_EMBER,
+      x: Math.max(24, Math.min(FIELD.width - 24, x)),
+      y: Math.max(24, Math.min(FIELD.height - 24, y)),
+      vy: -range(random, 8, 20),
       phase: random() * Math.PI * 2,
       radius: EMBER.radius,
       active: true,
@@ -153,6 +191,19 @@ export function createWorld(random) {
       vy: range(random, -FIREFLY.drift, FIREFLY.drift),
       phase: random() * Math.PI * 2,
       radius: FIREFLY.radius,
+      active: true,
+    });
+  }
+
+  function spawnPetal() {
+    const margin = 60;
+    state.petals.push({
+      kind: KIND_PETAL,
+      x: range(random, margin, FIELD.width - margin),
+      y: range(random, margin, FIELD.height - margin),
+      phase: random() * Math.PI * 2,
+      radius: MOONPETAL.radius,
+      life: 9,
       active: true,
     });
   }
@@ -186,6 +237,30 @@ export function createWorld(random) {
     });
   }
 
+  function spawnSpore() {
+    // Rooted away from the keeper, never on top of her.
+    let x;
+    let y;
+    for (let tries = 0; tries < 8; tries += 1) {
+      x = range(random, 50, FIELD.width - 50);
+      y = range(random, 60, FIELD.height - 60);
+      if (Math.hypot(x - state.player.x, y - state.player.y) > 200) break;
+    }
+    state.spores.push({
+      kind: KIND_SPORE,
+      x,
+      y,
+      vx: range(random, -SPORE.drift, SPORE.drift),
+      vy: range(random, -SPORE.drift, SPORE.drift),
+      phase: random() * Math.PI * 2,
+      radius: SPORE.radius,
+      mode: 'aim',
+      modeTimer: SPORE.aimSeconds,
+      fireTimer: SPORE.fireInterval,
+      active: true,
+    });
+  }
+
   function spawnBoss() {
     state.boss = {
       x: FIELD.width / 2,
@@ -205,17 +280,25 @@ export function createWorld(random) {
 
   function startWave(wave) {
     state.wave = wave;
+    state.theme = WAVE_THEMES[wave - 1];
     state.quota = WAVES.quotaBase + WAVES.quotaPerWave * wave;
     state.quotaGot = 0;
     state.wisps.length = 0;
     state.embers.length = 0;
     state.fireflies.length = 0;
+    state.spores.length = 0;
+    state.orbs.length = 0;
+    state.petals.length = 0;
     state.boss = null;
     state.wispTimer = 1.2;
     state.fireflyTimer = 2;
+    state.sporeTimer = 3;
+    // The petal clock is NOT reset here: a moonpetal blooms on its own
+    // schedule, about every 24 seconds of play, whatever the wave.
     for (let i = 0; i < 5 + wave; i += 1) spawnEmber(true);
     for (let i = 0; i < 2; i += 1) spawnFirefly();
     if (wave === WAVES.total) spawnBoss();
+    showBanner(`WAVE ${wave} — ${state.theme.name}`, state.theme.sub);
   }
 
   function offerUpgrades() {
@@ -234,6 +317,8 @@ export function createWorld(random) {
       player.maxGlow += 10;
       player.glow = Math.min(player.maxGlow, player.glow + 35);
     } else if (id === 'swift-wings') state.speedMult *= 1.18;
+    else if (id === 'slow-burn') state.drainMult *= 0.8;
+    else if (id === 'ember-trail') state.emberTrail = true;
     state.offered = [];
   }
 
@@ -249,9 +334,18 @@ export function createWorld(random) {
     state.multiplier = 1;
   }
 
-  function takeHit(fromX, fromY) {
+  function takeHit(fromX, fromY, damage) {
     const player = state.player;
-    player.glow -= GLOW.wispHit;
+    if (player.shield) {
+      // The moonpetal's ward holds: one hit, swallowed whole.
+      player.shield = false;
+      player.invuln = 1.1;
+      state.shake = 0.18;
+      burst(player.x, player.y, '#ffffff', 16, 240);
+      floatText(player.x, player.y - 26, 'SHIELD HELD', '#ffffff');
+      return EVENT_SHIELD;
+    }
+    player.glow -= damage;
     state.hitsTaken += 1;
     state.shake = 0.35;
     state.flash = 0.5;
@@ -286,6 +380,7 @@ export function createWorld(random) {
       return 0;
     }
     if (boss.mode === 'telegraph') {
+      // The king shows where it will strike: a lit line to its target.
       boss.targetX = player.x;
       boss.targetY = player.y;
       if (boss.modeTimer <= 0) {
@@ -308,7 +403,7 @@ export function createWorld(random) {
       const outOfField =
         boss.x < -80 || boss.x > FIELD.width + 80 || boss.y < -80 || boss.y > FIELD.height + 80;
       if (hitPlayer && player.invuln <= 0 && player.dashTime <= 0) {
-        const event = takeHit(boss.x, boss.y);
+        const event = takeHit(boss.x, boss.y, GLOW.wispHit);
         boss.mode = 'pause';
         boss.modeTimer = MOTH_KING.swoopPause;
         return event;
@@ -356,7 +451,7 @@ export function createWorld(random) {
         return EVENT_BOSS_HIT;
       }
       if (distance < boss.radius + player.radius - 4 && player.invuln <= 0 && player.dashTime <= 0) {
-        const event = takeHit(boss.x, boss.y);
+        const event = takeHit(boss.x, boss.y, GLOW.wispHit);
         boss.mode = 'telegraph';
         boss.modeTimer = 0.7;
         boss.vulnerable = false;
@@ -372,14 +467,89 @@ export function createWorld(random) {
     return 0;
   }
 
+  function stepSpores(dt) {
+    const player = state.player;
+    for (const spore of state.spores) {
+      if (!spore.active) continue;
+      spore.phase += dt * 2;
+      spore.x += spore.vx * dt;
+      spore.y += spore.vy * dt;
+      if (spore.x < 30 || spore.x > FIELD.width - 30) spore.vx *= -1;
+      if (spore.y < 40 || spore.y > FIELD.height - 40) spore.vy *= -1;
+      if (spore.mode === 'aim') {
+        spore.modeTimer -= dt;
+        if (spore.modeTimer <= 0) {
+          // Spit one slow orb at where the keeper stands now.
+          const dx = player.x - spore.x;
+          const dy = player.y - spore.y;
+          const length = Math.hypot(dx, dy) || 1;
+          state.orbs.push({
+            kind: KIND_ORB,
+            x: spore.x,
+            y: spore.y,
+            vx: (dx / length) * SPORE.orbSpeed,
+            vy: (dy / length) * SPORE.orbSpeed,
+            radius: SPORE.orbRadius,
+            life: SPORE.orbLife,
+            active: true,
+          });
+          spore.mode = 'cool';
+          spore.modeTimer = SPORE.fireInterval;
+          burst(spore.x, spore.y, '#b78cff', 6, 120);
+        }
+      } else {
+        spore.modeTimer -= dt;
+        if (spore.modeTimer <= 0) {
+          spore.mode = 'aim';
+          spore.modeTimer = SPORE.aimSeconds;
+        }
+      }
+    }
+    state.spores = state.spores.filter((s) => s.active);
+  }
+
+  function stepOrbs(dt) {
+    const player = state.player;
+    let events = 0;
+    for (const orb of state.orbs) {
+      if (!orb.active) continue;
+      orb.life -= dt;
+      orb.x += orb.vx * dt;
+      orb.y += orb.vy * dt;
+      if (orb.life <= 0 || orb.x < -30 || orb.x > FIELD.width + 30 || orb.y < -30 || orb.y > FIELD.height + 30) {
+        orb.active = false;
+        continue;
+      }
+      const dx = player.x - orb.x;
+      const dy = player.y - orb.y;
+      if (Math.hypot(dx, dy) < player.radius + orb.radius) {
+        if (player.dashTime > 0) {
+          // Dashing through an orb scatters it.
+          orb.active = false;
+          burst(orb.x, orb.y, '#b78cff', 10, 200);
+          state.orbsScattered += 1;
+          state.score += 5;
+        } else if (player.invuln <= 0) {
+          orb.active = false;
+          events |= takeHit(orb.x, orb.y, GLOW.orbHit);
+          if (events & EVENT_OVER) return events;
+        }
+      }
+    }
+    state.orbs = state.orbs.filter((o) => o.active);
+    return events;
+  }
+
   function stepPlay(dt, input) {
     const player = state.player;
+    const theme = state.theme;
     let events = 0;
     state.time += dt;
     state.playTime += dt;
 
-    // The light always burns: glow drains, faster in later waves.
-    player.glow -= (GLOW.drainPerSecond + GLOW.drainPerWave * (state.wave - 1)) * dt;
+    // The light always burns: glow drains, faster in later waves and on
+    // the Long Night; Slow Burn eases it.
+    player.glow -= (GLOW.drainPerSecond + GLOW.drainPerWave * (state.wave - 1)) * theme.drainMult * state.drainMult * dt;
     if (player.glow <= 0) {
       player.glow = 0;
       burst(player.x, player.y, '#ffd76a', 40, 320);
@@ -423,6 +593,12 @@ export function createWorld(random) {
       state.dashCount += 1;
       events |= EVENT_DASH;
       burst(player.x, player.y, '#9fe8ff', 10, 200);
+      if (state.emberTrail) {
+        // The trail: three fresh embers where the dash began.
+        for (let i = 1; i <= 3; i += 1) {
+          spawnEmberAt(player.x - dashX * 22 * i, player.y - dashY * 22 * i);
+        }
+      }
     }
 
     if (player.dashTime > 0) {
@@ -448,24 +624,38 @@ export function createWorld(random) {
       if (state.comboTimer <= 0) breakCombo();
     }
 
-    // Spawning: embers keep the garden fed, fireflies wander in, wisps hunt.
-    const emberTarget = 5 + state.wave;
+    // Spawning: embers keep the garden fed, fireflies wander in, wisps hunt,
+    // spores root and spit, and a moonpetal blooms now and then.
+    const emberTarget = Math.round((5 + state.wave) * theme.emberMult);
     state.spawnTimer -= dt;
     if (state.spawnTimer <= 0 && state.embers.length < emberTarget) {
       spawnEmber();
-      state.spawnTimer = 0.55;
+      state.spawnTimer = 0.55 / Math.max(1, theme.emberMult);
     }
     state.fireflyTimer -= dt;
     if (state.fireflyTimer <= 0) {
       spawnFirefly();
-      state.fireflyTimer = WAVES.fireflyEverySeconds + random() * 3;
+      state.fireflyTimer = (WAVES.fireflyEverySeconds + random() * 3) / Math.max(1, theme.fireflyMult);
     }
-    const wispCap = Math.min(9, WISP.maxAliveBase + WISP.maxAlivePerWave * state.wave);
+    const wispCap = Math.min(9, Math.round((WISP.maxAliveBase + WISP.maxAlivePerWave * state.wave) * theme.wispMult));
     state.wispTimer -= dt;
     if (state.wispTimer <= 0 && state.wisps.length < wispCap) {
       spawnWisp();
       const interval = Math.max(0.9, WISP.spawnInterval - WISP.spawnShrinkPerWave * state.wave);
-      state.wispTimer = interval * range(random, 0.8, 1.2);
+      state.wispTimer = interval * range(random, 0.8, 1.2) / Math.max(1, theme.wispMult);
+    }
+    const sporeCap = state.wave >= SPORE.firstWave
+      ? Math.min(4, Math.round((state.wave - SPORE.firstWave + 1) * theme.sporeMult))
+      : 0;
+    state.sporeTimer -= dt;
+    if (state.sporeTimer <= 0 && state.spores.length < sporeCap) {
+      spawnSpore();
+      state.sporeTimer = range(random, 2.5, 4);
+    }
+    state.petalTimer -= dt;
+    if (state.petalTimer <= 0 && state.petals.length === 0) {
+      spawnPetal();
+      state.petalTimer = MOONPETAL.everySeconds + random() * 6;
     }
     if (state.boss) {
       state.emberTrickleTimer -= dt;
@@ -491,7 +681,7 @@ export function createWorld(random) {
       if (Math.hypot(dx, dy) < player.radius + ember.radius + pickupRadius) {
         ember.active = false;
         addCombo();
-        const value = Math.round(EMBER.score * state.emberValueMult * state.multiplier);
+        const value = Math.round(EMBER.score * state.emberValueMult * theme.emberValueMult * state.multiplier);
         state.score += value;
         player.glow = Math.min(player.maxGlow, player.glow + GLOW.ember * state.emberValueMult);
         state.embersEaten += 1;
@@ -504,6 +694,7 @@ export function createWorld(random) {
     state.embers = state.embers.filter((e) => e.active);
 
     // Fireflies drift; catching one is worth more and keeps the chain alive.
+    const fireflyValueMult = theme.fireflyMult >= 2 ? 2 : 1;
     for (const fly of state.fireflies) {
       if (!fly.active) continue;
       fly.phase += dt * 2;
@@ -516,7 +707,7 @@ export function createWorld(random) {
       if (Math.hypot(dx, dy) < player.radius + fly.radius + pickupRadius) {
         fly.active = false;
         addCombo();
-        const value = Math.round(FIREFLY.score * state.multiplier);
+        const value = Math.round(FIREFLY.score * fireflyValueMult * state.multiplier);
         state.score += value;
         player.glow = Math.min(player.maxGlow, player.glow + GLOW.firefly);
         state.firefliesEaten += 1;
@@ -526,6 +717,32 @@ export function createWorld(random) {
       }
     }
     state.fireflies = state.fireflies.filter((f) => f.active);
+
+    // Moonpetals bloom briefly: a shield for one hit and a deep drink of glow.
+    for (const petal of state.petals) {
+      if (!petal.active) continue;
+      petal.phase += dt * 1.5;
+      petal.life -= dt;
+      if (petal.life <= 0) {
+        petal.active = false;
+        continue;
+      }
+      const dx = player.x - petal.x;
+      const dy = player.y - petal.y;
+      if (Math.hypot(dx, dy) < player.radius + petal.radius + pickupRadius) {
+        petal.active = false;
+        addCombo();
+        const value = Math.round(MOONPETAL.score * state.multiplier);
+        state.score += value;
+        player.glow = Math.min(player.maxGlow, player.glow + MOONPETAL.glow);
+        player.shield = true;
+        state.petalsEaten += 1;
+        burst(petal.x, petal.y, '#ffffff', 18, 220);
+        floatText(petal.x, petal.y - 12, `+${value} SHIELD`, '#ffffff');
+        events |= EVENT_PETAL;
+      }
+    }
+    state.petals = state.petals.filter((p) => p.active);
 
     // Wisps steer toward the light. Touching one (unless dashing or shielded
     // by invulnerability) burns glow and breaks the combo.
@@ -555,12 +772,17 @@ export function createWorld(random) {
           state.score += 5;
         } else if (player.invuln <= 0) {
           wisp.active = false;
-          events |= takeHit(wisp.x, wisp.y);
+          events |= takeHit(wisp.x, wisp.y, GLOW.wispHit);
           if (events & EVENT_OVER) return events;
         }
       }
     }
     state.wisps = state.wisps.filter((w) => w.active);
+
+    // Spores aim and spit; their orbs drift and burn.
+    stepSpores(dt);
+    events |= stepOrbs(dt);
+    if (events & EVENT_OVER) return events;
 
     // The Moth King, on wave 8.
     if (state.boss) {
@@ -606,6 +828,10 @@ export function createWorld(random) {
     state.floats = state.floats.filter((f) => f.life > 0);
     state.shake = Math.max(0, state.shake - dt);
     state.flash = Math.max(0, state.flash - dt * 1.6);
+    if (state.banner) {
+      state.banner.timer -= dt;
+      if (state.banner.timer <= 0) state.banner = null;
+    }
   }
 
   return {
@@ -632,15 +858,23 @@ export function createWorld(random) {
       state.hitsTaken = 0;
       state.embersEaten = 0;
       state.firefliesEaten = 0;
+      state.petalsEaten = 0;
+      state.sporesScattered = 0;
+      state.orbsScattered = 0;
       state.lightRadiusMult = 1;
       state.dashCooldownMult = 1;
       state.pickupBonus = 0;
       state.emberValueMult = 1;
       state.speedMult = 1;
+      state.drainMult = 1;
+      state.emberTrail = false;
       state.offered = [];
       state.embers = [];
       state.fireflies = [];
       state.wisps = [];
+      state.spores = [];
+      state.orbs = [];
+      state.petals = [];
       state.boss = null;
       state.particles = [];
       state.floats = [];

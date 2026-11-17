@@ -3,9 +3,9 @@
 // renderer paints what is there. The game moves between six screens: title,
 // play, upgrade, paused, game over and victory.
 //
-// ?seed=N fixes the garden's pattern. ?shot=title|play|upgrade|end (with
-// &seed=N) stages that scene instead of running the loop, paints it twice
-// and sets window.__shotReady for a screenshot.
+// ?seed=N fixes the garden's pattern. ?shot=title|play|upgrade|boss|win|end
+// (with &seed=N) stages that scene instead of running the loop, paints it
+// twice and sets window.__shotReady for a screenshot.
 import { BEST_KEY, STEP } from './config.js';
 import { createRandom } from './random.js';
 import { createAudio } from './audio.js';
@@ -16,7 +16,9 @@ import {
   EVENT_FIREFLY,
   EVENT_HIT,
   EVENT_OVER,
+  EVENT_PETAL,
   EVENT_PICKUP,
+  EVENT_SHIELD,
   EVENT_WAVE_CLEAR,
   EVENT_WIN,
   createWorld,
@@ -53,6 +55,8 @@ function playEvents(events) {
   const state = world.state;
   if (events & EVENT_PICKUP) audio.collect(state.combo);
   if (events & EVENT_FIREFLY) audio.firefly(state.combo);
+  if (events & EVENT_PETAL) audio.petal();
+  if (events & EVENT_SHIELD) audio.shield();
   if (events & EVENT_HIT) audio.hit();
   if (events & EVENT_DASH) audio.dash();
   if (events & EVENT_WAVE_CLEAR) audio.waveClear(state.wave);

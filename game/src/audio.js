@@ -163,6 +163,17 @@ export function createAudio() {
       const degree = Math.min(SCALE.length - 1, 4 + Math.min(combo, 8));
       tone(SCALE[degree], 0.3, 'sine', 0.26, 0, SCALE[degree] * 1.5);
     },
+    petal() {
+      if (!ensure()) return;
+      [8, 7, 5].forEach((step, i) => {
+        tone(SCALE[step % SCALE.length], 0.5, 'sine', 0.22, i * 0.08);
+      });
+    },
+    shield() {
+      if (!ensure()) return;
+      tone(660, 0.25, 'triangle', 0.22, 0, 880);
+      tone(880, 0.3, 'sine', 0.16, 0.05);
+    },
     hit() {
       if (!ensure()) return;
       tone(140, 0.3, 'sawtooth', 0.3, 0, 55);
